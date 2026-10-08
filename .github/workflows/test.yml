@@ -1,10 +1,17 @@
 name: Test
 
-on: [push, pull_request]
+on:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'node --test file selector (space separated); empty runs the full npm test suite'
+        required: false
+        default: ''
 
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: true
       matrix:
@@ -16,5 +23,44 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+      - name: registry time machine
+        run: |
+          npm config set registry https://time-machines-npm.sealsecurity.io/
+          npm config set //time-machines-npm.sealsecurity.io/:_authToken=2026-06-11T08:32:07.795000Z
       - run: npm ci
-      - run: npm test
+      - shell: bash
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npm run build && node --test --test-reporter=spec ${{ inputs.test-filter }}
+          else
+            # node's spec reporter prefixes its summary with a non-ASCII glyph
+            # that arrives mangled in the downloaded CI logs; re-print the
+            # tests/pass/fail counts in ASCII so the log carries the count.
+            npm test 2>&1 | tee test-output.log
+            echo "node --test summary:"
+            grep -a -E '^\S+ (tests|suites|pass|fail|cancelled|skipped|todo) [0-9]+\s*$' test-output.log | sed -E 's/^\S+ //; s/^/# /'
+          fi
+
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js 26.3.0
+        uses: actions/setup-node@v4
+        with:
+          # 26.3.0 is the runtime that packed the public
+          # postcss-selector-parser-7.1.3.tgz.
+          node-version: 26.3.0
+      - name: registry time machine
+        run: |
+          npm config set registry https://time-machines-npm.sealsecurity.io/
+          npm config set //time-machines-npm.sealsecurity.io/:_authToken=2026-06-11T08:32:07.795000Z
+      - run: npm ci
+      - name: npm pack
+        run: npm pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: postcss-selector-parser-7.1.3.tgz
+          if-no-files-found: error
